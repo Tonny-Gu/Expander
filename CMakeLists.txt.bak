@@ -1,0 +1,21 @@
+# Uncomment the next line if you want to force using clang
+# SET (CMAKE_CXX_COMPILER "/usr/bin/clang++" CACHE STRING "C++ compiler" FORCE)
+
+cmake_minimum_required(VERSION 3.16)
+project(librapp)
+
+set(CMAKE_CXX_STANDARD 20)
+
+set(CMAKE_CXX_FLAGS "-march=native -mtune=native -Wall -Wextra -g -O1")
+# set(CMAKE_CXX_FLAGS_DEBUG "-march=native -mtune=native -Wall -Wextra -g -O0")
+# set(CMAKE_CXX_FLAGS_RELEASE "-march=native -mtune=native -Wall -Wextra -O3")
+
+include_directories(include)
+include_directories(lib)
+
+# we're not using Orion as a pure lib, it includes some of the code in the src folder actually
+# add_subdirectory(lib/Orion)
+add_subdirectory(src/cuda)
+add_subdirectory(lib/btc_sha256)
+add_subdirectory(tests)
+add_subdirectory(benchmarks)

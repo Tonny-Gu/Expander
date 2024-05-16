@@ -12,5 +12,5 @@ include_directories(../lib/btc_sha256)
 
 add_executable(transcript_benchmark bench_transcript.cpp)
 add_executable(keccak_benchmark bench_keccak.cpp)
-target_link_libraries(keccak_benchmark pthread btc_sha256)
-target_link_libraries(transcript_benchmark pthread btc_sha256)
+target_link_libraries(keccak_benchmark pthread btc_sha256 expander_cuda)
+target_link_libraries(transcript_benchmark pthread btc_sha256 expander_cuda)

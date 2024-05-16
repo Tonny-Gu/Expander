@@ -38,7 +38,7 @@ std::pair<float, int> bench_func(int thread_id, Config &local_config)
     auto t1 = std::chrono::high_resolution_clock::now();
     float proving_time = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
     const int circuit_copy_size = 8;
-    return std::make_pair(proving_time, gkr::M31_field::PackedM31::pack_size() * gkr::M31_field::vectorize_size * circuit_copy_size);
+    return std::make_pair(proving_time, gkr::M31_field::vectorize_size * circuit_copy_size);
 }
 
 int main(int argc, char* argv[])

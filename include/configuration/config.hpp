@@ -45,7 +45,7 @@ public:
         case M31:
             field_size = 31;
             // TODO: set the value of vectorize_size in VectorizedM31
-            vectorize_size = nb_parallel / gkr::M31_field::PackedM31::pack_size();
+            vectorize_size = nb_parallel;
             break;
         case BabyBear:
             field_size = 31;

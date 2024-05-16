@@ -11,6 +11,7 @@ cmake-build-debug
 cmake-build-release
 Makefile
 *.a
+.cache
 
 # related projects
 gkr-compiler

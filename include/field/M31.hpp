@@ -147,102 +147,14 @@ public:
     typedef __m256i DATA_TYPE;
 #endif
 
-class PackedM31 final : public BaseField<PackedM31, Scalar>,
-                        public FFTFriendlyField<PackedM31>
-{
-public:
-    static PackedM31 INV_2;
-
-    DATA_TYPE x;
-
-    static PackedM31 zero();
-    static PackedM31 one();
-
-    static std::tuple<Scalar, uint32> size()
-    {
-        Scalar s;
-        s = mod;
-        return {s, 2};
-    }
-
-    static PackedM31 random();
-    static PackedM31 random_bool();
-
-    inline static PackedM31 new_unchecked(const DATA_TYPE &x);
-    inline static PackedM31 pack(const M31 *fs);
-    inline static size_t pack_size();
-
-
-public:
-    PackedM31();
-    PackedM31(const PackedM31 &x);
-
-    PackedM31(uint32 xx);
-    PackedM31(const DATA_TYPE &xx);
-
-    inline DATA_TYPE reduce_sum(DATA_TYPE x) const;
-    inline PackedM31 operator+(const PackedM31 &rhs) const;
-    inline PackedM31 operator+(const M31 &rhs_single) const;
-    inline PackedM31 operator*(const PackedM31 &rhs) const;
-    inline PackedM31 operator*(const M31 &rhs_single) const;
-    inline PackedM31 operator-() const;
-    inline PackedM31 operator-(const PackedM31 &rhs) const;
-    inline void operator+=(const PackedM31 &rhs);
-    inline bool operator==(const PackedM31 &rhs) const;
-
-    void to_bytes(uint8 *output) const
-    {
-        memcpy(output, this, sizeof(*this));
-    }
-    void from_bytes(const uint8* input);
-
-    M31 sum_packed() const {
-        int *x = (int *)&this->x;
-        int sum_x = 0;
-        for (int i = 0; i < 8; i++)
-        {
-            sum_x += *x;
-            x++;
-        }
-        return M31::new_unchecked(sum_x);
-    }
-    
-    static PackedM31 pack_full(const M31 &f);
-    std::vector<M31> unpack() const;
-};
-
-// Input: a vector of field elements, length h
-// Output: a vector of packed field elements, length ceil(h / 8)
-//
-inline std::vector<PackedM31> pack_field_elements(const std::vector<M31> &fs);
-inline std::vector<M31> unpack_field_elements(const std::vector<PackedM31> &pfs)
-{
-    std::vector<M31> fs;
-    fs.reserve(pfs.size() * PackedM31::pack_size());
-    for (const auto &pf : pfs)
-    {
-        int *x = (int *)&pf.x;
-        for (uint32 i = 0; i < 8; i++)
-        {
-            fs.emplace_back(M31::new_unchecked(*x));
-            x++;
-        }
-    }
-    return fs;
-}
-
-#ifdef __ARM_NEON
-const int vectorize_size = 2;
-#else
-const int vectorize_size = 1;
-#endif
+const int vectorize_size = 256;
 
 class VectorizedM31 final : public BaseField<VectorizedM31, Scalar>,
                                         public FFTFriendlyField<VectorizedM31>
 {
     public:
     typedef M31 primitive_type;
-    PackedM31 elements[vectorize_size];
+    M31 elements[vectorize_size];
 
     static VectorizedM31 INV_2;
     static VectorizedM31 zero()
@@ -250,12 +162,14 @@ class VectorizedM31 final : public BaseField<VectorizedM31, Scalar>,
         VectorizedM31 z;
         for (int i = 0; i < vectorize_size; i++)
         {
-            z.elements[i] = PackedM31::zero();
+            z.elements[i] = M31::zero();
         }
         return z;
     }
  
-    static VectorizedM31 one();
+    static VectorizedM31 one() {
+        return new_unchecked(M31::one());
+    }
 
     static std::tuple<Scalar, uint32> size()
     {
@@ -268,7 +182,7 @@ class VectorizedM31 final : public BaseField<VectorizedM31, Scalar>,
         VectorizedM31 r;
         for (int i = 0; i < vectorize_size; i++)
         {
-            r.elements[i] = PackedM31::random();
+            r.elements[i] = M31::random();
         }
         return r;
     }
@@ -278,23 +192,53 @@ class VectorizedM31 final : public BaseField<VectorizedM31, Scalar>,
         VectorizedM31 r;
         for (int i = 0; i < vectorize_size; i++)
         {
-            r.elements[i] = PackedM31::random_bool();
+            r.elements[i] = M31(M31::random().x % 2);
         }
         return r;
     }
 
-    inline static VectorizedM31 new_unchecked(const DATA_TYPE &x)
+    inline static VectorizedM31 new_unchecked(const M31 &x)
     {
         VectorizedM31 r;
         for (int i = 0; i < vectorize_size; i++)
         {
-            r.elements[i] = PackedM31::new_unchecked(x);
+            r.elements[i] = x;
         }
         return r;
     }
     
     static VectorizedM31 pack_full(const M31 &f);
-    static std::vector<VectorizedM31> pack_field_elements(const std::vector<M31> &fs);
+    static std::vector<VectorizedM31> pack_field_elements(const std::vector<M31> &fs) {
+        uint32 n_seg = (fs.size() + pack_size() - 1) / pack_size(); // ceiling
+        std::vector<VectorizedM31> packed_field_elements(n_seg);
+
+        for (uint32 i = 0; i < n_seg - 1; i++)
+        {
+            for (uint32 j = 0; j < vectorize_size; j++)
+            {
+                uint32 base = i * pack_size() + j;
+                //packed_field_elements[i].elements[j].x = vld1q_u32((uint32_t *)&fs[base]);
+                packed_field_elements[i].elements[j].x = fs[base].x;
+            }
+        }
+
+        // set the remaining value
+        uint32 base = (n_seg - 1) * pack_size();
+        std::vector<int> x(pack_size());
+        auto x_it = x.begin();
+        for (uint32 i = base; i < fs.size(); i++)
+        {
+            *x_it++ = fs[i].x;
+        }
+        for (uint32 j = 0; j < vectorize_size; j++)
+        {
+            auto offset = j;
+            //packed_field_elements[n_seg - 1].elements[j].x = vld1q_u32((uint32_t *)&x[offset]);
+            packed_field_elements[n_seg - 1].elements[j].x = x[offset];
+        }
+
+        return packed_field_elements;
+    }
 
 public:   
 
@@ -305,7 +249,7 @@ public:
         mod_reduce_int(xx);
         for (int i = 0; i < vectorize_size; i++)
         {
-            elements[i] = PackedM31(xx);
+            elements[i] = M31(xx);
         }
     }
 
@@ -342,7 +286,7 @@ public:
         VectorizedM31 result;
         for (int i = 0; i < vectorize_size; i++)
         {
-            result.elements[i] = elements[i] * PackedM31::pack_full(rhs);
+            result.elements[i] = elements[i] * rhs;
         }
         return result;
     }
@@ -352,7 +296,7 @@ public:
         VectorizedM31 result;
         for (int i = 0; i < vectorize_size; i++)
         {
-            result.elements[i] = elements[i] * PackedM31::pack_full(rhs);
+            result.elements[i] = elements[i] * rhs;
         }
         return result;
     }
@@ -362,7 +306,7 @@ public:
         VectorizedM31 result;
         for (int i = 0; i < vectorize_size; i++)
         {
-            result.elements[i] = elements[i] + PackedM31::pack_full(rhs);
+            result.elements[i] = elements[i] + rhs;
         }
         return result;
     }
@@ -372,7 +316,7 @@ public:
         VectorizedM31 result;
         for (int i = 0; i < vectorize_size; i++)
         {
-            result.elements[i] = elements[i] + PackedM31::pack_full(rhs);
+            result.elements[i] = elements[i] + rhs;
         }
         return result;
     }
@@ -421,7 +365,7 @@ public:
     {
         for (int i = 0; i < vectorize_size; i++)
         {
-            elements[i].to_bytes(output + i * sizeof(PackedM31));
+            elements[i].to_bytes(output + i * sizeof(M31));
         }
     }
 
@@ -429,7 +373,7 @@ public:
     {
         for (int i = 0; i < vectorize_size; i++)
         {
-            elements[i].from_bytes(input + i * sizeof(PackedM31));
+            elements[i].from_bytes(input + i * sizeof(M31));
         }
     }
 
@@ -437,28 +381,17 @@ public:
         std::vector<M31> result;
         for (int i = 0; i < vectorize_size; i++)
         {
-            std::vector<M31> unpacked = elements[i].unpack();
-            result.insert(result.end(), unpacked.begin(), unpacked.end());
+            result.push_back(elements[i]);
         }
         return result;
     }
 
     static size_t pack_size() {
-        return vectorize_size * PackedM31::pack_size();
+        return vectorize_size;
     }
 };
 
-M31 M31::INV_2 = (1 << 30);
-PackedM31 PackedM31::INV_2 = PackedM31(1 << 30);
-
+inline M31 M31::INV_2 = (1 << 30);
+inline VectorizedM31 VectorizedM31::INV_2 = VectorizedM31::new_unchecked(M31::INV_2);
 
 } // namespace gkr::M31_field
-
-
-
-
-#ifdef __ARM_NEON
-#include "M31_neon.tcc"
-#else
-#include "M31_avx.tcc"
-#endif
