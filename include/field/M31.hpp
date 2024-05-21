@@ -147,7 +147,7 @@ public:
     typedef __m256i DATA_TYPE;
 #endif
 
-const int vectorize_size = 256;
+const int vectorize_size = 32;
 
 class VectorizedM31 final : public BaseField<VectorizedM31, Scalar>,
                                         public FFTFriendlyField<VectorizedM31>

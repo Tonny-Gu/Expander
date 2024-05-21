@@ -1,6 +1,9 @@
 #pragma once
 
+#include <cassert>
+#include <cstdint>
 #include <memory>
+#include "LinearGKR/cuda.hpp"
 #include "poly_commit/poly.hpp"
 #include "utils/myutil.hpp"
 #include "sumcheck_common.hpp"
@@ -55,7 +58,8 @@ public:
     F* bookkeeping_f;
     F* bookkeeping_hg;
     const F* initial_v;
-    void prepare(uint32 nb_vars_, F* p1_evals, F* p2_evals, const F* v)
+    cuda::gkr::SumcheckGKRHelper *gpu_helper;
+    void prepare(uint32 nb_vars_, F* p1_evals, F* p2_evals, const F* v, cuda::gkr::SumcheckGKRHelper& ghelper)
     {
         nb_vars = nb_vars_;
         sumcheck_var_idx = 0;
@@ -63,6 +67,7 @@ public:
         bookkeeping_f = p1_evals;
         bookkeeping_hg = p2_evals;
         initial_v = v;
+        gpu_helper = &ghelper;
     }
 
     std::vector<F> poly_eval_at(uint32 var_idx, uint32 degree, bool *gate_exists)
@@ -73,63 +78,82 @@ public:
         auto src_v = (var_idx == 0 ? initial_v : bookkeeping_f);
         int evalSize = 1 << (nb_vars - var_idx - 1);
 
-        for (int i = 0; i < evalSize; i++)
-        {
-            if (!gate_exists[i * 2] && !gate_exists[i * 2 + 1])
-            {
-                continue;
-            }
-            for(int j = 0; j < gkr::M31_field::vectorize_size; j++)
-            {
-                auto f_v_0 = src_v[i * 2].elements[j];
-                auto f_v_1 = src_v[i * 2 + 1].elements[j];
-                auto hg_v_0 = bookkeeping_hg[i * 2].elements[j];
-                auto hg_v_1 = bookkeeping_hg[i * 2 + 1].elements[j];
-                /*
-                 * Following intrinsics is the same as:
-                p0.elements[j] += f_v_0 * hg_v_0;
-                p1.elements[j] += f_v_1 * hg_v_1;
-                p2.elements[j] += (f_v_0 + f_v_1) * (hg_v_0 + hg_v_1);
-                 */
+        // gpu_helper->pad->check(gate_exists, bookkeeping_hg, bookkeeping_f, evalSize);
+
+        // for (int i = 0; i < evalSize; i++)
+        // {
+        //     if (!gate_exists[i * 2] && !gate_exists[i * 2 + 1])
+        //     {
+        //         continue;
+        //     }
+        //     for(int j = 0; j < gkr::M31_field::vectorize_size; j++)
+        //     {
+        //         auto f_v_0 = src_v[i * 2].elements[j];
+        //         auto f_v_1 = src_v[i * 2 + 1].elements[j];
+        //         auto hg_v_0 = bookkeeping_hg[i * 2].elements[j];
+        //         auto hg_v_1 = bookkeeping_hg[i * 2 + 1].elements[j];
+        //         /*
+        //          * Following intrinsics is the same as:
+        //         p0.elements[j] += f_v_0 * hg_v_0;
+        //         p1.elements[j] += f_v_1 * hg_v_1;
+        //         p2.elements[j] += (f_v_0 + f_v_1) * (hg_v_0 + hg_v_1);
+        //          */
             
-                p0.elements[j] += f_v_0 * hg_v_0;
-                p1.elements[j] += f_v_1 * hg_v_1;
-                p2.elements[j] += (f_v_0 + f_v_1) * (hg_v_0 + hg_v_1);
-            }
-        }
-        p2 = p1 * F(6) + p0 * F(3) - p2 * F(2);
-        return {p0, p1, p2};
+        //         p0.elements[j] += f_v_0 * hg_v_0;
+        //         p1.elements[j] += f_v_1 * hg_v_1;
+        //         p2.elements[j] += (f_v_0 + f_v_1) * (hg_v_0 + hg_v_1);
+        //     }
+        // }
+        // p2 = p1 * F(6) + p0 * F(3) - p2 * F(2);
+
+        // return {p0, p1, p2};
+        auto ret = gpu_helper->poly_eval_at(evalSize, var_idx, degree);
+        auto ret_f = reinterpret_cast<F*>(ret);
+
+        // for (auto k = 0ll; k < gkr::M31_field::vectorize_size; k++) {
+        //     assert(p0.elements[k] == ret_f[0].elements[k]);
+        //     assert(p1.elements[k] == ret_f[1].elements[k]);
+        //     assert(p2.elements[k] == ret_f[2].elements[k]);
+        // }
+        // printf("eval pass, size=%ld\n", evalSize);
+
+        return {ret_f[0], ret_f[1], ret_f[2]};
     }
 
     void receive_challenge(uint32 var_idx, const F_primitive& r, bool *gate_exists)
     {
         auto src_v = (var_idx == 0 ? initial_v : bookkeeping_f);
         assert(var_idx == sumcheck_var_idx && 0 <= var_idx && var_idx < nb_vars);
-        for (uint32 i = 0; i < (cur_eval_size >> 1); i++)
-        {
-            if (!gate_exists[i * 2] && !gate_exists[i * 2 + 1])
-            {
-                gate_exists[i] = false;
-                for(uint32 j = 0; j < gkr::M31_field::vectorize_size; j++)
-                {
-                    bookkeeping_f[i].elements[j] = src_v[2 * i].elements[j] + (src_v[2 * i + 1].elements[j] - src_v[2 * i].elements[j]) * r;
-                }
-                bookkeeping_hg[i] = 0;
-            }
-            else
-            {
-                gate_exists[i] = true;
-                for(uint32 j = 0; j < gkr::M31_field::vectorize_size; j++)
-                {
-                    bookkeeping_f[i].elements[j] = src_v[2 * i].elements[j] + (src_v[2 * i + 1].elements[j] - src_v[2 * i].elements[j]) * r;
-                    bookkeeping_hg[i].elements[j] = bookkeeping_hg[2 * i].elements[j] + (bookkeeping_hg[2 * i + 1].elements[j] - bookkeeping_hg[2 * i].elements[j]) * r;
-                }
-            }
+        // gpu_helper->pad->check(gate_exists, bookkeeping_hg, bookkeeping_f, cur_eval_size >> 1);
+        // for (uint32 i = 0; i < (cur_eval_size >> 1); i++)
+        // {
+        //     if (!gate_exists[i * 2] && !gate_exists[i * 2 + 1])
+        //     {
+        //         gate_exists[i] = false;
+        //         for(uint32 j = 0; j < gkr::M31_field::vectorize_size; j++)
+        //         {
+        //             bookkeeping_f[i].elements[j] = src_v[2 * i].elements[j] + (src_v[2 * i + 1].elements[j] - src_v[2 * i].elements[j]) * r;
+        //         }
+        //         bookkeeping_hg[i] = 0;
+        //     }
+        //     else
+        //     {
+        //         gate_exists[i] = true;
+        //         for(uint32 j = 0; j < gkr::M31_field::vectorize_size; j++)
+        //         {
+        //             bookkeeping_f[i].elements[j] = src_v[2 * i].elements[j] + (src_v[2 * i + 1].elements[j] - src_v[2 * i].elements[j]) * r;
+        //             bookkeeping_hg[i].elements[j] = bookkeeping_hg[2 * i].elements[j] + (bookkeeping_hg[2 * i + 1].elements[j] - bookkeeping_hg[2 * i].elements[j]) * r;
+        //         }
+        //     }
             
-        }
+        // }
 
         cur_eval_size >>= 1;
         sumcheck_var_idx++;
+        
+        gpu_helper->receive_challenge(cur_eval_size, var_idx, r.x);
+        // gpu_helper->store_f_hg();
+        // gpu_helper->pad->check(gate_exists, bookkeeping_hg, bookkeeping_f, cur_eval_size);
     }
 
 };
@@ -155,6 +179,7 @@ public:
     CircuitLayer<F, F_primitive> const* poly_ptr;
     F_primitive alpha, beta;
     GKRScratchPad<F, F_primitive>* pad_ptr;
+    cuda::gkr::SumcheckGKRHelper gpu_helper;
 
     std::vector<F_primitive> rx, ry;
 
@@ -261,14 +286,16 @@ public:
     }
 
     void _prepare_phase_two(Timing &timer)
-    {
+    {   
+        gpu_helper.store_f_hg();
         timer.add_timing("      prepare phase two, _prepare_h_y_vals");
         _prepare_h_y_vals(rx, vx_claim(), poly_ptr->mul, pad_ptr->gate_exists, timer);
         timer.report_timing("      prepare phase two, _prepare_h_y_vals");
         timer.add_timing("      prepare phase two, prepare");
         // TODO: may use the memory v_x_evals as long as the value vx_claim is saved
-        y_helper.prepare(nb_input_vars, pad_ptr->v_evals, pad_ptr->hg_evals, poly_ptr->input_layer_vals.evals.data());
+        y_helper.prepare(nb_input_vars, pad_ptr->v_evals, pad_ptr->hg_evals, poly_ptr->input_layer_vals.evals.data(), gpu_helper);
         timer.report_timing("      prepare phase two, prepare");
+        gpu_helper.load_f_hg();
     }
 
 public:
@@ -295,8 +322,12 @@ public:
         _prepare_g_x_vals(rz1, rz2, alpha, beta, poly.mul, poly.add, poly.input_layer_vals, pad_ptr->gate_exists, timer);
         timer.report_timing("      prepare phase one, _prepare_g_x_vals");
         timer.add_timing("      prepare phase one, prepare");
-        x_helper.prepare(nb_input_vars, pad_ptr->v_evals, pad_ptr->hg_evals, poly.input_layer_vals.evals.data());
+        x_helper.prepare(nb_input_vars, pad_ptr->v_evals, pad_ptr->hg_evals, poly.input_layer_vals.evals.data(), gpu_helper);
         timer.report_timing("      prepare phase one, prepare");
+
+        gpu_helper.init(scratch_pad.pad_gpu, scratch_pad.v_evals, scratch_pad.hg_evals, scratch_pad.gate_exists);
+        gpu_helper.load_f_hg();
+        gpu_helper.load_v_init(poly.input_layer_vals.evals.data(), poly.input_layer_vals.evals.size());
     }
 
     std::vector<F> poly_evals_at(uint32 var_idx, uint32 degree, Timing &timer)
@@ -328,6 +359,8 @@ public:
             y_helper.receive_challenge(var_idx - nb_input_vars, r, pad_ptr->gate_exists);
             ry.emplace_back(r);
         }
+
+        gpu_helper.store_f_hg();
     }
 
     F vx_claim()
