@@ -68,15 +68,15 @@ public:
         }
         return cnt;
     }
-    const size_t i_len_log2() const
+    size_t i_len_log2() const
     {
         return bit_width(i_len) - 1;
     }
-    const size_t o_len_log2() const
+    size_t o_len_log2() const
     {
         return bit_width(o_len) - 1;
     }
-    const bool contain_gates() const
+    bool contain_gates() const
     {
         return gate_muls.size() > 0 || gate_adds.size() > 0 || gate_consts.size() > 0;
     }
@@ -498,16 +498,16 @@ public:
         return segments[layers[i]];
     }
 
-    const size_t input_size() const
+    size_t input_size() const
     {
         return layer_at(0).i_len;
     }
 
-    const size_t output_size() const
+    size_t output_size() const
     {
         return layer_at(layers.size() - 1).o_len;
     }
-    const size_t max_layer() const 
+    size_t max_layer() const 
     {
         size_t max_size = 0;
         for (size_t i = 0; i < layers.size(); i++)

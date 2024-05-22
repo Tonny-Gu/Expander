@@ -64,7 +64,7 @@ std::tuple<std::vector<std::vector<F_primitive>>, std::vector<std::vector<F_prim
 {
     SumcheckGKRHelper<F, F_primitive> helper[3]; // TODO remove this constant
     timer.add_timing("    prepare time");
-    for (uint32 i = 0; i < config.get_num_repetitions(); i++)
+    for (auto i = 0ll; i < config.get_num_repetitions(); i++)
     {
         helper[i].prepare(poly, rz1[i], rz2[i], alpha, beta, scratch_pad[i], timer);
     }

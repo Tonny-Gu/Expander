@@ -73,10 +73,10 @@ public:
 
     std::vector<F> poly_eval_at(uint32 var_idx, uint32 degree, bool *gate_exists)
     {
-        F p0 = F::zero();
-        F p1 = F::zero();
-        F p2 = F::zero();
-        auto src_v = (var_idx == 0 ? initial_v : bookkeeping_f);
+        // F p0 = F::zero();
+        // F p1 = F::zero();
+        // F p2 = F::zero();
+        // auto src_v = (var_idx == 0 ? initial_v : bookkeeping_f);
         int evalSize = 1 << (nb_vars - var_idx - 1);
 
         // cuda::scratchpad_check(pad_ptr, evalSize >> 1);
@@ -123,7 +123,7 @@ public:
 
     void receive_challenge(uint32 var_idx, const F_primitive& r, bool *gate_exists)
     {
-        auto src_v = (var_idx == 0 ? initial_v : bookkeeping_f);
+        // auto src_v = (var_idx == 0 ? initial_v : bookkeeping_f);
         assert(var_idx == sumcheck_var_idx && 0 <= var_idx && var_idx < nb_vars);
         // cuda::scratchpad_check(pad_ptr, cur_eval_size);
         // for (uint32 i = 0; i < (cur_eval_size >> 1); i++)
@@ -208,7 +208,7 @@ public:
     {
         timer.add_timing("          prepare g_x_vals, _eq_evals_at");
         F *hg_vals = pad_ptr->hg_evals;
-        memset(hg_vals, 0, sizeof(F) * vals.evals.size());
+        memset(hg_vals->elements, 0, sizeof(F) * vals.evals.size());
         memset(gate_exists, 0, sizeof(bool) * vals.evals.size());
 
         _eq_evals_at(rz1, alpha, pad_ptr->eq_evals_at_rz1, pad_ptr -> eq_evals_first_half, pad_ptr -> eq_evals_second_half);
@@ -266,7 +266,7 @@ public:
     {
         timer.add_timing("          prepare h_y_vals, _eq_evals_at");
         F *hg_vals = pad_ptr->hg_evals;
-        memset(hg_vals, 0, sizeof(F) * (1 << rx.size()));
+        memset(hg_vals->elements, 0, sizeof(F) * (1 << rx.size()));
         memset(gate_exists, 0, sizeof(bool) * (1 << rx.size()));
 
         F_primitive const* eq_evals_at_rz1 = pad_ptr->eq_evals_at_rz1; // already computed in g_x preparation

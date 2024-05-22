@@ -306,7 +306,7 @@ public:
     {
         std::vector<F> &input_layer_vals = layers[0].input_layer_vals.evals;
         input_layer_vals.clear();
-        for (uint32 i = 0; i < (1UL << log_input_size()); i++)
+        for (auto i = 0ll; i < (1 << log_input_size()); i++)
         {
             input_layer_vals.emplace_back(F::random());
         }
@@ -315,7 +315,7 @@ public:
     {
         std::vector<F> &input_layer_vals = layers[0].input_layer_vals.evals;
         input_layer_vals.clear();
-        for (uint32 i = 0; i < (1 << log_input_size()); i++)
+        for (auto i = 0ll; i < (1 << log_input_size()); i++)
         {
             input_layer_vals.emplace_back(F::random_bool());
         }

@@ -72,7 +72,7 @@ int main(int argc, char* argv[])
     printf("Default parallel repetition config %d\n", local_config.get_num_repetitions());
     std::vector<std::thread> threads(num_thread);
     int *partial_proofs = new int[num_thread];
-    memset(partial_proofs, 0, sizeof(partial_proofs));
+    memset(partial_proofs, 0, sizeof(*partial_proofs) * num_thread);
     auto start_time = std::chrono::high_resolution_clock::now();
     std::mutex m;
     for(int i = 0; i < num_thread; i++)
