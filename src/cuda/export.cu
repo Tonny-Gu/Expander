@@ -3,3 +3,4 @@
 #include "cuda/m31.cuh"
 #include "cuda/gkr_helper.cuh"
 #include "cuda/scratchpad.cuh"
+#include "cuda/circuit.cuh"

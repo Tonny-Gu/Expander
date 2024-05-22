@@ -27,6 +27,10 @@ void scratchpad_store(void* pad_host);
 CudaBatchF* gkr_poly_eval_at(CudaScratchPad *pad, int32_t eval_size, uint32_t var_idx, uint32_t degree);
 void gkr_receive_challenge(CudaScratchPad *pad, int32_t eval_size, uint32_t var_idx, const void *r_ptr);
 
+struct CudaCircuitLayer;
+void layer_load_wires(void* layer_host);
+void layer_load_inputs(void* layer_host);
+
 template <typename T, typename... Args>
 void __host_new(T*& ptr, Args && ...args) {
   // this is a wrapper for clangd

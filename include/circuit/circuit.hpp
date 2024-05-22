@@ -1,5 +1,6 @@
 #pragma once
 
+#include "cuda/export.hpp"
 #include "poly_commit/poly.hpp"
 #include "../utils/types.hpp"
 #include "../utils/myutil.hpp"
@@ -76,6 +77,9 @@ public:
 
     SparseCircuitConnection<F_primitive, 1> add;
     SparseCircuitConnection<F_primitive, 2> mul;
+
+    cuda::CudaCircuitLayer *layer_gpu;
+    bool layer_gpu_init = false;
 
     static CircuitLayer random(uint32 nb_output_vars, uint32 nb_input_vars)
     {
@@ -211,6 +215,11 @@ public:
         fclose(file);
         
         c._compute_nb_vars();
+
+        for (auto& e : c.layers) {
+            cuda::layer_load_wires(&e);
+        }
+
         return c;
     }
 
@@ -247,6 +256,11 @@ public:
         }
 
         circuit._compute_nb_vars();
+
+        for (auto& e : circuit.layers) {
+            cuda::layer_load_wires(&e);
+        }
+
         return circuit;
     }
 
@@ -277,6 +291,10 @@ public:
             layers[i + 1].input_layer_vals.evals = layers[i].evaluate();
         }
         layers.back().output_layer_vals.evals = layers.back().evaluate();
+
+        for (auto& e : layers) {
+            cuda::layer_load_inputs(&e);
+        }
     }
 
     uint32 log_input_size() const
