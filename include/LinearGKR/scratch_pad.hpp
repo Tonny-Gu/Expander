@@ -1,7 +1,8 @@
 #pragma once
 
 #include "circuit/circuit.hpp"
-#include "LinearGKR/cuda.hpp"
+#include "cuda/export.hpp"
+#include "utils/types.hpp"
 
 namespace gkr
 {
@@ -10,7 +11,7 @@ template<typename F, typename F_primitive>
 class GKRScratchPad
 {
 private:
-    void _mem_init(uint32 max_nb_output, uint32 max_nb_input)
+    void _mem_init()
     {
         uint32 F_size = sizeof(F);
 
@@ -39,8 +40,8 @@ public:
     F_primitive *eq_evals_at_rz1, *eq_evals_at_rz2;
     F_primitive *eq_evals_first_half, *eq_evals_second_half;
     bool *gate_exists;
-    cuda::gkr::ScratchPad pad_gpu;
-
+    cuda::CudaScratchPad *pad_gpu;
+    int64_t max_nb_output, max_nb_input;
 
     void prepare(const Circuit<F, F_primitive> &circuit)
     {
@@ -50,8 +51,10 @@ public:
             max_nb_output_vars = std::max(max_nb_output_vars, layer.nb_output_vars);
             max_nb_input_vars = std::max(max_nb_input_vars, layer.nb_input_vars);
         }
-        _mem_init(1 << max_nb_output_vars, 1 << max_nb_input_vars);
-        pad_gpu.init(1 << max_nb_output_vars, 1 << max_nb_input_vars);
+        max_nb_input = 1 << max_nb_input_vars;
+        max_nb_output = 1 << max_nb_output_vars;
+        _mem_init();
+        cuda::scratchpad_init(pad_gpu, 1 << max_nb_output_vars, 1 << max_nb_input_vars);
     }
 
     ~GKRScratchPad()
@@ -65,7 +68,7 @@ public:
         __free(eq_evals_first_half);
         __free(eq_evals_second_half);
         free(gate_exists);
-        pad_gpu.deinit();
+        cuda::scratchpad_deinit(pad_gpu);
     }
 };
 

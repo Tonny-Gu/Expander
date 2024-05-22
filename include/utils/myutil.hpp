@@ -10,7 +10,7 @@
 
 using namespace std;
 
-void report_timing(string event_name, bool is_start)
+inline void report_timing(string event_name, bool is_start)
 {
     static unordered_map<string, chrono::time_point<chrono::system_clock>> last;
     auto nw = chrono::system_clock::now();
@@ -30,12 +30,12 @@ void report_timing(string event_name, bool is_start)
 namespace gkr 
 {
 
-bool is_pow_2(uint32 n)
+inline bool is_pow_2(uint32 n)
 {
     return (n & (n - 1)) == 0;
 }
 
-uint32 next_pow_of_2(uint32 n)
+inline uint32 next_pow_of_2(uint32 n)
 {
     if (n == 0 || is_pow_2(n))
     {

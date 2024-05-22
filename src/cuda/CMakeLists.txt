@@ -12,10 +12,13 @@ enable_language("CUDA")
 
 find_package(CUDAToolkit)
 
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O0 -g -G")
+if (CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA")
+  set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O0 -g -G")
+endif()
+
 
 set(CUDA_SRCS
-  ${CMAKE_CURRENT_LIST_DIR}/test.cu
+  ${CMAKE_CURRENT_LIST_DIR}/export.cu
 )
 
 add_library(expander_cuda ${CUDA_SRCS})

@@ -438,8 +438,8 @@ template <typename F>
 F Segment<F>::current_rand_sentinel = F::default_rand_sentinel();
 
 const bool circuit_extraction = false;
-const char* extracted_circuit_file_mul = "ExtractedCircuitMul.txt";
-const char* extracted_circuit_file_add = "ExtractedCircuitAdd.txt";
+inline const char* extracted_circuit_file_mul = "ExtractedCircuitMul.txt";
+inline const char* extracted_circuit_file_add = "ExtractedCircuitAdd.txt";
 template <typename F>
 class CircuitRaw
 {
