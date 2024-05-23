@@ -1,9 +1,5 @@
 enable_language("CUDA")
 
-# if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-#   set(CMAKE_CUDA_ARCHITECTURES native)
-# endif()
-
 # if (CMAKE_CUDA_COMPILER_ID STREQUAL "Clang")
 #     set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O1 -g -Xclang -fcuda-allow-variadic-functions")
 # else()
@@ -13,6 +9,11 @@ enable_language("CUDA")
 find_package(CUDAToolkit)
 
 if (CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA")
+  
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+    set(CMAKE_CUDA_ARCHITECTURES native)
+  endif()
+
   set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O0 -g -G")
 endif()
 

@@ -125,6 +125,7 @@ public:
     {
         // auto src_v = (var_idx == 0 ? initial_v : bookkeeping_f);
         assert(var_idx == sumcheck_var_idx && 0 <= var_idx && var_idx < nb_vars);
+        int evalSize = 1 << (nb_vars - var_idx - 1);
         // cuda::scratchpad_check(pad_ptr, cur_eval_size);
         // for (uint32 i = 0; i < (cur_eval_size >> 1); i++)
         // {
@@ -152,7 +153,7 @@ public:
         cur_eval_size >>= 1;
         sumcheck_var_idx++;
         
-        cuda::gkr_receive_challenge(pad_ptr->pad_gpu, cur_eval_size, var_idx, &r);
+        cuda::gkr_receive_challenge(pad_ptr->pad_gpu, evalSize, var_idx, &r);
         // cuda::scratchpad_store(pad_ptr);
         // cuda::scratchpad_check(pad_ptr, cur_eval_size * 2);
 
@@ -221,6 +222,7 @@ public:
         {
             eq_evals_at_rz1[i] = eq_evals_at_rz1[i] + eq_evals_at_rz2[i];
         }
+        printf("rz1_size=%d\n", 1 << rz1.size());
 
         auto mul_size = mul.sparse_evals.size();
         timer.add_timing("          prepare g_x_vals, mul loop " + std::to_string(mul_size));
@@ -254,7 +256,7 @@ public:
             hg_vals[x] = hg_vals[x] + gate.coef * eq_evals_at_rz1[z];
             gate_exists[x] = true;
         }
-        // printf("mul_size=%ld add_size=%ld\n", mul_size, add_size);
+        printf("mul_size=%ld add_size=%ld\n", mul_size, add_size);
         timer.report_timing("          prepare g_x_vals, add loop" + std::to_string(add_size));
     }
 
@@ -274,6 +276,7 @@ public:
         F_primitive const* eq_evals_at_rz1 = pad_ptr->eq_evals_at_rz1; // already computed in g_x preparation
         _eq_evals_at(rx, F_primitive::one(), pad_ptr->eq_evals_at_rx, pad_ptr -> eq_evals_first_half, pad_ptr -> eq_evals_second_half);
         F_primitive const* eq_evals_at_rx = pad_ptr->eq_evals_at_rx;
+        printf("rx_size=%d\n", 1 << rx.size());
         timer.report_timing("          prepare h_y_vals, _eq_evals_at");
         timer.add_timing("          prepare h_y_vals, loop");
         for(const Gate<F_primitive, 2>& gate: mul.sparse_evals)
