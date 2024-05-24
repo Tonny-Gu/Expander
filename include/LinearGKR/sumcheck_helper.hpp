@@ -222,7 +222,7 @@ public:
         {
             eq_evals_at_rz1[i] = eq_evals_at_rz1[i] + eq_evals_at_rz2[i];
         }
-        printf("rz1_size=%d\n", 1 << rz1.size());
+        // printf("rz1_size=%d\n", 1 << rz1.size());
 
         auto mul_size = mul.sparse_evals.size();
         timer.add_timing("          prepare g_x_vals, mul loop " + std::to_string(mul_size));
@@ -263,7 +263,7 @@ public:
             hg_vals[x] = hg_vals[x] + gate.coef * eq_evals_at_rz1[z];
             gate_exists[x] = true;
         }
-        printf("mul_size=%ld add_size=%ld\n", mul_size, add_size);
+        // printf("mul_size=%ld add_size=%ld\n", mul_size, add_size);
         timer.report_timing("          prepare g_x_vals, add loop" + std::to_string(add_size));
     }
 
@@ -283,7 +283,7 @@ public:
         F_primitive const* eq_evals_at_rz1 = pad_ptr->eq_evals_at_rz1; // already computed in g_x preparation
         _eq_evals_at(rx, F_primitive::one(), pad_ptr->eq_evals_at_rx, pad_ptr -> eq_evals_first_half, pad_ptr -> eq_evals_second_half);
         F_primitive const* eq_evals_at_rx = pad_ptr->eq_evals_at_rx;
-        printf("rx_size=%d\n", 1 << rx.size());
+        // printf("rx_size=%d\n", 1 << rx.size());
         timer.report_timing("          prepare h_y_vals, _eq_evals_at");
         timer.add_timing("          prepare h_y_vals, loop");
         for(const Gate<F_primitive, 2>& gate: mul.sparse_evals)

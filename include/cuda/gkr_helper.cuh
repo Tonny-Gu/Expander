@@ -6,37 +6,22 @@
 #include "cuda/scratchpad.cuh"
 #include "field/M31.hpp"
 
-#include <cub/cub.cuh>
-
 namespace cuda {
 
-template <typename T>
-struct Pack3 {
-  T v0, v1, v2;
-
-  __device__ __host__ __forceinline__
-  constexpr Pack3<T> operator+(const Pack3<T> &rhs) const {
-    return Pack3<T>{
-      v0 + rhs.v0,
-      v1 + rhs.v1,
-      v2 + rhs.v2
-    };
-  }
-};
-
-template <int64_t block_dim_y = 16>
 __global__
-static void __poly_eval_at_kernel(CudaBatchF *f_in, CudaBatchF *hg, CudaBatchF *p_out, bool *gate_exists, int32_t eval_size, int32_t var_idx) {
-
-  auto tid_x = threadIdx.x + blockIdx.x * blockDim.x;
-  auto tid_y = threadIdx.y;
-  auto p = Pack3<CudaF>{CudaF::zero(), CudaF::zero(), CudaF::zero()};
+static void __poly_eval_at_kernel_phase1(CudaBatchF *f_in, CudaBatchF *hg, Pack3<CudaBatchF*> p_psum, bool *gate_exists, int32_t eval_size, int32_t var_idx) {
+  auto tid_x = threadIdx.x + blockIdx.y * blockDim.y;
+  auto tid_y = blockIdx.x;
 
   // if (tid >= BatchF::batch_size) {
   //   return;
   // }
 
-  for (auto i = tid_y; i < eval_size; i += block_dim_y) {
+  auto p0 = CudaF::zero();
+  auto p1 = CudaF::zero();
+  auto p2 = CudaF::zero();
+
+  for (auto i = tid_y; i < eval_size; i += gridDim.x) {
     // NOTE: maybe broadcast is applied to gate_exists
     // TOOD: consider to replace bool with ui64 and load to shared memory
 
@@ -52,39 +37,64 @@ static void __poly_eval_at_kernel(CudaBatchF *f_in, CudaBatchF *hg, CudaBatchF *
     auto hg_v_0 = hg[left].elems[tid_x];
     auto hg_v_1 = hg[right].elems[tid_x];
 
-    p.v0 += f_v_0 * hg_v_0;
-    p.v1 += f_v_1 * hg_v_1;
-    p.v2 += (f_v_0 + f_v_1) * (hg_v_0 + hg_v_1);
+    p0 += f_v_0 * hg_v_0;
+    p1 += f_v_1 * hg_v_1;
+    p2 += (f_v_0 + f_v_1) * (hg_v_0 + hg_v_1);
   }
 
-  if (tid_x < 2 && block_dim_y == 2) {
-    p.v0.v = tid_x * 10 + tid_y;
-    // printf("(x%d, y%d) p0=%u\n",
-    //   tid_x, tid_y, p.v0.v);
-  } 
+  p_psum.v0[tid_y].elems[tid_x] = p0;
+  p_psum.v1[tid_y].elems[tid_x] = p1;
+  p_psum.v2[tid_y].elems[tid_x] = p2;
+}
 
-  if constexpr (block_dim_y > 1) {
-    using BlockReduce = cub::BlockReduce<Pack3<CudaM31>, 1, cub::BLOCK_REDUCE_WARP_REDUCTIONS, block_dim_y>;
-    __shared__ typename BlockReduce::TempStorage temp_storage;
-    Pack3<CudaF> p_sum = BlockReduce(temp_storage).Sum(p);
+__global__
+static void __poly_eval_at_kernel_phase2(Pack3<CudaBatchF*> p_psum, int32_t eval_size, int32_t var_idx) {
+  // in-place 2d reduction
+  auto tid_x = threadIdx.x + blockIdx.y * blockDim.y;
+  auto tid_y = blockIdx.x;
 
-    if (tid_x < 2 && block_dim_y == 2) {
-      printf("(x%d, y%d) p0=%u -> %u\n",
-        tid_x, tid_y, p.v0.v, p_sum.v0.v);
-    } 
+  auto p0 = CudaF::zero();
+  auto p1 = CudaF::zero();
+  auto p2 = CudaF::zero();
 
-    if (tid_y > 0) {
-      return;
-    }
+  // #pragma unroll
+  for (auto i = tid_y; i < eval_size; i += gridDim.x) {
+    auto left = i << (var_idx + 1);
+    auto right = left + (1 << var_idx);
 
-    // p = p_sum;
+    p0 += p_psum.v0[left].elems[tid_x] + p_psum.v0[right].elems[tid_x];
+    p1 += p_psum.v1[left].elems[tid_x] + p_psum.v1[right].elems[tid_x];
+    p2 += p_psum.v2[left].elems[tid_x] + p_psum.v2[right].elems[tid_x];
 
-    
+    // if (tid_x == 0) {
+    //   printf("(blk=%d, eval=%d, i=%d) reduce: %u (%d) + %u (%d) = %u\n",
+    //     tid_y, eval_size, var_idx, p_psum.v0[left].elems[tid_x].v, left, p_psum.v0[right].elems[tid_x].v, right, p0.v);
+    // }
   }
+
+  auto left = tid_y << (var_idx + 1);
+  p_psum.v0[left].elems[tid_x] = p0;
+  p_psum.v1[left].elems[tid_x] = p1;
+  p_psum.v2[left].elems[tid_x] = p2;
+
+  // if (tid_x == 0) {
+  //   printf("(blk=%d, eval=%d, i=%d) write: %u (%d)\n",
+  //     tid_y, eval_size, var_idx, p0.v, left);
+  // }
   
-  p_out[0].elems[tid_x] = p.v0;
-  p_out[1].elems[tid_x] = p.v1;
-  p_out[2].elems[tid_x] = p.v1 * CudaF::make(6) + p.v0 * CudaF::make(3) - p.v2 * CudaF::make(2);
+}
+
+__global__
+static void __poly_eval_at_kernel_phase3(Pack3<CudaBatchF*> p_psum, CudaBatchF* p) {
+  auto tid_x = threadIdx.x + blockIdx.y * blockDim.y;
+
+  auto p0 = p_psum.v0[0].elems[tid_x];
+  auto p1 = p_psum.v1[0].elems[tid_x];
+  auto p2 = p_psum.v2[0].elems[tid_x];
+
+  p[0].elems[tid_x] = p0;
+  p[1].elems[tid_x] = p1;
+  p[2].elems[tid_x] = p1 * CudaF::make(6) + p0 * CudaF::make(3) - p2 * CudaF::make(2);
 }
 
 __global__
@@ -117,26 +127,24 @@ static void __update_gate_exists_kernel(bool *gate_exists, int32_t eval_size, in
 
 CudaBatchF* gkr_poly_eval_at(CudaScratchPad *pad, int32_t eval_size, uint32_t var_idx, uint32_t degree) {
   auto f_in = (var_idx == 0) ? pad->v_init : pad->v_evals;
-  switch (eval_size) {
-  case 1:
-  
-  case 4:
-  case 8:
-  case 16:
-  // default:
-    __poly_eval_at_kernel<1><<<CudaBatchF::grid_size, block_size>>>(
-      f_in, pad->hg_evals, pad->p, pad->gate_exists, eval_size, var_idx);
-    break;
-  
-  case 2:
-    __poly_eval_at_kernel<2><<<1, dim3(2, 2)>>>(
-      f_in, pad->hg_evals, pad->p, pad->gate_exists, eval_size, var_idx);
-    break;
-  default:
-    __poly_eval_at_kernel<32><<<CudaBatchF::batch_size / 32, dim3(32, 32)>>>(
-      f_in, pad->hg_evals, pad->p, pad->gate_exists, eval_size, var_idx);
-    break;
+  auto p_psum = Pack3<CudaBatchF*>{pad->p0, pad->p1, pad->p2};
+  constexpr int64_t elem_per_thread = 32;
+  assert(__builtin_popcount(eval_size) == 1);
+  auto grid_dim_x = div_ceil(eval_size, elem_per_thread);
+
+  __poly_eval_at_kernel_phase1<<<dim3(grid_dim_x, CudaBatchF::grid_size), block_size>>>(
+    f_in, pad->hg_evals, p_psum, pad->gate_exists, eval_size, var_idx);
+
+  auto i = 0;
+  while (grid_dim_x > 1) {
+    auto psum_len = grid_dim_x / 2;
+    grid_dim_x = div_ceil(psum_len, elem_per_thread); 
+    __poly_eval_at_kernel_phase2<<<dim3(grid_dim_x, CudaBatchF::grid_size), block_size>>>
+      (p_psum, psum_len, i);
+    i += 1;
   }
+
+  __poly_eval_at_kernel_phase3<<<dim3(1, CudaBatchF::grid_size), block_size>>>(p_psum, pad->p);
   
   CUDA_CHECK(cudaMemcpy(pad->p_host, pad->p, sizeof(CudaBatchF) * 3,
     cudaMemcpyDeviceToHost));

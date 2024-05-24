@@ -11,6 +11,9 @@ struct CudaScratchPad {
   CudaBatchF *v_init;
   CudaBatchF *v_evals;
   CudaBatchF *hg_evals;
+  CudaBatchF *p0; // partial sums
+  CudaBatchF *p1;
+  CudaBatchF *p2;
   CudaBatchF *p;
 
   CudaBatchF *v_evals_host;
@@ -55,6 +58,9 @@ void scratchpad_init(CudaScratchPad*& pad, int64_t max_nb_output, int64_t max_nb
   __allocate_device(pad->v_evals, max_nb_input);
   __allocate_device(pad->hg_evals, max_nb_input);
   __allocate_device(pad->p, 3);
+  __allocate_device(pad->p0, max_nb_input / 16);
+  __allocate_device(pad->p1, max_nb_input / 16);
+  __allocate_device(pad->p2, max_nb_input / 16);
   __allocate_host(pad->v_evals_host, max_nb_input);
   __allocate_host(pad->hg_evals_host, max_nb_input);
   __allocate_host(pad->p_host, 3);
