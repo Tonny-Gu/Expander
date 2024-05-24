@@ -3,6 +3,10 @@
 #include <iostream>
 #include "field/M31.hpp"
 
+#ifdef __clang__
+#include <__clang_cuda_builtin_vars.h>
+#endif
+
 namespace cuda {
 
 using HostF = gkr::M31_field::M31;

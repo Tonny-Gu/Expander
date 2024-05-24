@@ -12,24 +12,24 @@ struct CudaM31 {
   
   uint32_t v;
 
-  __device__ __host__
+  __device__ __host__ __forceinline__
   static CudaM31 zero() { return CudaM31{0}; }
 
-  __device__ __host__
+  __device__ __host__ __forceinline__
   static CudaM31 one() { return CudaM31{1}; }
 
-  __device__ __host__
+  __device__ __host__ __forceinline__
   static constexpr CudaM31 mod_reduce(const CudaM31 &rhs) {
     return CudaM31{rhs.v % mod};
   }
 
-  __device__ __host__
+  __device__ __host__ __forceinline__
   static constexpr CudaM31 mod_reduce(const int64_t& rhs) {
     uint32_t ret = rhs % mod;
     return CudaM31{ret};
   }
 
-  __device__ __host__
+  __device__ __host__ __forceinline__
   static constexpr CudaM31 make(uint32_t v) {
     return CudaM31{v};
   }
@@ -38,36 +38,36 @@ struct CudaM31 {
     return CudaM31{v.x};
   }
 
-  __device__ __host__
+  __device__ __host__ __forceinline__
   constexpr CudaM31 operator+(const CudaM31 &rhs) const {
     auto ret = CudaM31{v + rhs.v};
     return mod_reduce(ret);
   }
 
-  __device__ __host__
+  __device__ __host__ __forceinline__
   constexpr CudaM31 operator*(const CudaM31 &rhs) const {
     int64_t rhs_i64 = rhs.v;
     int64_t lhs_i64 = v;
     return mod_reduce(lhs_i64 * rhs_i64);
   }
 
-  __device__ __host__
+  __device__ __host__ __forceinline__
   constexpr CudaM31 operator-() const {
     uint32_t ret = v == 0 ? 0 : mod - v;
     return CudaM31{ret}; 
   }
 
-  __device__ __host__
+  __device__ __host__ __forceinline__
   constexpr CudaM31 operator-(const CudaM31 &rhs) const {
     return *this + (-rhs);
   }
 
-  __device__ __host__
+  __device__ __host__ __forceinline__
   constexpr void operator+=(const CudaM31 &rhs) {
     v = (*this + rhs).v;
   }
 
-  __device__ __host__
+  __device__ __host__ __forceinline__
   constexpr bool operator==(const CudaM31 &rhs) const {
     return this->v == rhs.v;
   };

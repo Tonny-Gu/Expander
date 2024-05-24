@@ -229,6 +229,7 @@ public:
         const Gate<F_primitive, 2>* mul_ptr = mul.sparse_evals.data();
         const F* vals_eval_ptr = vals.evals.data();
         timer.add_timing("          prepare g_x_vals, mul loop2 " + std::to_string(mul_size));
+        std::map<uint32_t, int32_t> bin;
         for(long unsigned int i = 0; i < mul_size; i++)
         {
             // g(x) += eq(rz, z) * v(y) * coef
@@ -239,6 +240,12 @@ public:
 
             hg_vals[x] += vals_eval_ptr[y] * (gate.coef * eq_evals_at_rz1[z]);
             gate_exists[x] = true;
+
+            if (!bin.contains(x)) {
+                bin[x] = 1;
+            } else {
+                printf("found dup, x=%u, count=%d\n", x, ++bin[x]);
+            }
         }
         timer.report_timing("          prepare g_x_vals, mul loop " + std::to_string(mul_size));
         timer.report_timing("          prepare g_x_vals, mul loop2 " + std::to_string(mul_size));
