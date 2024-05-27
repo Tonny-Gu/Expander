@@ -79,7 +79,6 @@ public:
     SparseCircuitConnection<F_primitive, 2> mul;
 
     cuda::CudaCircuitLayer *layer_gpu;
-    bool layer_gpu_init = false;
 
     static CircuitLayer random(uint32 nb_output_vars, uint32 nb_input_vars)
     {
@@ -215,11 +214,6 @@ public:
         fclose(file);
         
         c._compute_nb_vars();
-
-        for (auto& e : c.layers) {
-            cuda::layer_load_wires(&e);
-        }
-
         return c;
     }
 
@@ -256,11 +250,6 @@ public:
         }
 
         circuit._compute_nb_vars();
-
-        for (auto& e : circuit.layers) {
-            cuda::layer_load_wires(&e);
-        }
-
         return circuit;
     }
 
@@ -293,7 +282,8 @@ public:
         layers.back().output_layer_vals.evals = layers.back().evaluate();
 
         for (auto& e : layers) {
-            cuda::layer_load_inputs(&e);
+            cuda::layer_init(e.layer_gpu);
+            cuda::layer_load(&e);
         }
     }
 

@@ -9,6 +9,7 @@
 #include "sumcheck_helper.hpp"
 #include "sumcheck_verifier_utils.hpp"
 #include "configuration/config.hpp"
+#include "cuda/export.hpp"
 #include <map>
 namespace gkr
 {
@@ -90,6 +91,7 @@ std::tuple<std::vector<std::vector<F_primitive>>, std::vector<std::vector<F_prim
             if (i_var == poly.nb_input_vars - 1)
             {
                 timer.add_timing("    vx_claim time");
+                cuda::scratchpad_store(&scratch_pad[j]);
                 transcript.append_f(helper[j].vx_claim());
                 timer.report_timing("    vx_claim time");
             }
@@ -98,6 +100,7 @@ std::tuple<std::vector<std::vector<F_primitive>>, std::vector<std::vector<F_prim
     for(int j = 0; j < config.get_num_repetitions(); j++)
     {
         timer.add_timing("  vy_claim time");
+        cuda::scratchpad_store(&scratch_pad[j]);
         transcript.append_f(helper[j].vy_claim());
         timer.report_timing("  vy_claim time");
     }

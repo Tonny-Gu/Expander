@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <cstdint>
+#include <future>
 #include <memory>
 #include "cuda/export.hpp"
 #include "poly_commit/poly.hpp"
@@ -55,12 +56,13 @@ public:
     uint32 nb_vars;
     uint32 sumcheck_var_idx;
     uint32 cur_eval_size;
-    GKRScratchPad<F, F_primitive>* pad_ptr;
+    cuda::CudaScratchPad* pad_gpu;
+    cuda::CudaCircuitLayer* layer_gpu;
     F* bookkeeping_f;
     F* bookkeeping_hg;
     const F* initial_v;
 
-    void prepare(uint32 nb_vars_, F* p1_evals, F* p2_evals, const F* v, GKRScratchPad<F, F_primitive>* pad)
+    void prepare(uint32 nb_vars_, F* p1_evals, F* p2_evals, const F* v, cuda::CudaScratchPad* pad, cuda::CudaCircuitLayer* layer)
     {
         nb_vars = nb_vars_;
         sumcheck_var_idx = 0;
@@ -68,7 +70,8 @@ public:
         bookkeeping_f = p1_evals;
         bookkeeping_hg = p2_evals;
         initial_v = v;
-        pad_ptr = pad;
+        pad_gpu = pad;
+        layer_gpu = layer;
     }
 
     std::vector<F> poly_eval_at(uint32 var_idx, uint32 degree, bool *gate_exists)
@@ -108,7 +111,7 @@ public:
         // p2 = p1 * F(6) + p0 * F(3) - p2 * F(2);
 
         // return {p0, p1, p2};
-        auto ret = cuda::gkr_poly_eval_at(pad_ptr->pad_gpu, evalSize, var_idx, degree);
+        auto ret = cuda::gkr_poly_eval_at(pad_gpu, layer_gpu, evalSize, var_idx, degree);
         auto ret_f = reinterpret_cast<F*>(ret);
 
         // for (auto k = 0ll; k < gkr::M31_field::vectorize_size; k++) {
@@ -153,7 +156,7 @@ public:
         cur_eval_size >>= 1;
         sumcheck_var_idx++;
         
-        cuda::gkr_receive_challenge(pad_ptr->pad_gpu, evalSize, var_idx, &r);
+        cuda::gkr_receive_challenge(pad_gpu, layer_gpu, evalSize, var_idx, &r);
         // cuda::scratchpad_store(pad_ptr);
         // cuda::scratchpad_check(pad_ptr, cur_eval_size * 2);
 
@@ -229,7 +232,6 @@ public:
         const Gate<F_primitive, 2>* mul_ptr = mul.sparse_evals.data();
         const F* vals_eval_ptr = vals.evals.data();
         timer.add_timing("          prepare g_x_vals, mul loop2 " + std::to_string(mul_size));
-        std::map<uint32_t, int32_t> bin;
         for(long unsigned int i = 0; i < mul_size; i++)
         {
             // g(x) += eq(rz, z) * v(y) * coef
@@ -240,12 +242,6 @@ public:
 
             hg_vals[x] += vals_eval_ptr[y] * (gate.coef * eq_evals_at_rz1[z]);
             gate_exists[x] = true;
-
-            if (!bin.contains(x)) {
-                bin[x] = 1;
-            } else {
-                printf("found dup, x=%u, count=%d\n", x, ++bin[x]);
-            }
         }
         timer.report_timing("          prepare g_x_vals, mul loop " + std::to_string(mul_size));
         timer.report_timing("          prepare g_x_vals, mul loop2 " + std::to_string(mul_size));
@@ -295,22 +291,28 @@ public:
 
             hg_vals[y] += v_rx * (eq_evals_at_rz1[z] * eq_evals_at_rx[x] * gate.coef);
             gate_exists[y] = true;
+            // printf("cpu: updated %d %u\n", y, hg_vals[y].elements[0].x);
         }
         // printf("sparse_size=%ld\n", mul.sparse_evals.size());
         timer.report_timing("          prepare h_y_vals, loop");
     }
 
     void _prepare_phase_two(Timing &timer)
-    {   
-        cuda::scratchpad_store(pad_ptr);
+    {
+        cuda::scratchpad_test(pad_ptr, "prepare2/begin");
+        // cuda::scratchpad_store(pad_ptr);
         timer.add_timing("      prepare phase two, _prepare_h_y_vals");
         _prepare_h_y_vals(rx, vx_claim(), poly_ptr->mul, pad_ptr->gate_exists, timer);
+        cuda::gkr_prepare_h_y_vals(pad_ptr->pad_gpu, poly_ptr, pad_ptr->eq_evals_at_rx, 1 << rx.size());
         timer.report_timing("      prepare phase two, _prepare_h_y_vals");
         timer.add_timing("      prepare phase two, prepare");
         // TODO: may use the memory v_x_evals as long as the value vx_claim is saved
-        y_helper.prepare(nb_input_vars, pad_ptr->v_evals, pad_ptr->hg_evals, poly_ptr->input_layer_vals.evals.data(), pad_ptr);
+        y_helper.prepare(nb_input_vars, pad_ptr->v_evals, pad_ptr->hg_evals, poly_ptr->input_layer_vals.evals.data(),
+            pad_ptr->pad_gpu, poly_ptr->layer_gpu);
         timer.report_timing("      prepare phase two, prepare");
-        cuda::scratchpad_load(pad_ptr);
+        // cuda::scratchpad_check(pad_ptr, 1 << rx.size());
+        // cuda::scratchpad_load(pad_ptr);
+        cuda::scratchpad_test(pad_ptr, "prepare2/end");
     }
 
 public:
@@ -335,18 +337,20 @@ public:
         // phase one
         timer.add_timing("      prepare phase one, _prepare_g_x_vals");
         _prepare_g_x_vals(rz1, rz2, alpha, beta, poly.mul, poly.add, poly.input_layer_vals, pad_ptr->gate_exists, timer);
+        cuda::gkr_prepare_g_x_vals(pad_ptr->pad_gpu, poly_ptr, pad_ptr->eq_evals_at_rz1, 1 << rz1.size());
         timer.report_timing("      prepare phase one, _prepare_g_x_vals");
         timer.add_timing("      prepare phase one, prepare");
-        x_helper.prepare(nb_input_vars, pad_ptr->v_evals, pad_ptr->hg_evals, poly.input_layer_vals.evals.data(), pad_ptr);
+        x_helper.prepare(nb_input_vars, pad_ptr->v_evals, pad_ptr->hg_evals, poly.input_layer_vals.evals.data(),
+            pad_ptr->pad_gpu, poly_ptr->layer_gpu);
         timer.report_timing("      prepare phase one, prepare");
-
-        cuda::scratchpad_load(pad_ptr);
-        cuda::scratchpad_load_v_init(pad_ptr->pad_gpu,
-            poly.input_layer_vals.evals.data(), poly.input_layer_vals.evals.size());
+        // cuda::scratchpad_check(pad_ptr, 1 << rz1.size());
+        // cuda::scratchpad_load(pad_ptr);
+        cuda::scratchpad_test(pad_ptr, "prepare1");
     }
 
     std::vector<F> poly_evals_at(uint32 var_idx, uint32 degree, Timing &timer)
     {
+        cuda::scratchpad_test(pad_ptr, "eval");
         if (var_idx < nb_input_vars)
         {
             return x_helper.poly_eval_at(var_idx, degree, pad_ptr->gate_exists);
@@ -364,6 +368,7 @@ public:
 
     void receive_challenge(uint32 var_idx, const F_primitive& r)
     {
+        cuda::scratchpad_test(pad_ptr, "recv/begin");
         if (var_idx < nb_input_vars)
         {
             x_helper.receive_challenge(var_idx, r, pad_ptr->gate_exists);
@@ -374,8 +379,7 @@ public:
             y_helper.receive_challenge(var_idx - nb_input_vars, r, pad_ptr->gate_exists);
             ry.emplace_back(r);
         }
-
-        cuda::scratchpad_store(pad_ptr);
+        cuda::scratchpad_test(pad_ptr, "recv/end");
     }
 
     F vx_claim()

@@ -4,7 +4,10 @@
 #include "cuda/common.cuh"
 #include "cuda/m31.cuh"
 #include "cuda/scratchpad.cuh"
+#include "cuda/circuit.cuh"
+#include "circuit/circuit.hpp"
 #include "field/M31.hpp"
+#include <cstdint>
 
 namespace cuda {
 
@@ -109,6 +112,10 @@ static void __recv_challenge_kernel(CudaBatchF *f_in, CudaBatchF *f_out, CudaBat
   f_out[left].elems[tid_x] = f_in[left].elems[tid_x] + (f_in[right].elems[tid_x] - f_in[left].elems[tid_x]) * r;
   hg[left].elems[tid_x] = (!gate_exists[left] && !gate_exists[right]) ?
     CudaF::zero() : hg[left].elems[tid_x] + (hg[right].elems[tid_x] - hg[left].elems[tid_x]) * r;
+  
+  // if (tid_x == 0 && tid_y == 0) {
+  //   printf("rc: %u\n", f_out[0].elems[0].v);
+  // }
 }
 
 __global__
@@ -125,8 +132,8 @@ static void __update_gate_exists_kernel(bool *gate_exists, int32_t eval_size, in
   gate_exists[left] = gate_exists[left] || gate_exists[right];
 }
 
-CudaBatchF* gkr_poly_eval_at(CudaScratchPad *pad, int32_t eval_size, uint32_t var_idx, uint32_t degree) {
-  auto f_in = (var_idx == 0) ? pad->v_init : pad->v_evals;
+CudaBatchF* gkr_poly_eval_at(CudaScratchPad *pad, CudaCircuitLayer *layer, int32_t eval_size, uint32_t var_idx, uint32_t degree) {
+  auto f_in = (var_idx == 0) ? layer->input_layer_vals.get() : pad->v_evals;
   auto p_psum = Pack3<CudaBatchF*>{pad->p0, pad->p1, pad->p2};
   constexpr int64_t elem_per_thread = 32;
   assert(__builtin_popcount(eval_size) == 1);
@@ -148,15 +155,122 @@ CudaBatchF* gkr_poly_eval_at(CudaScratchPad *pad, int32_t eval_size, uint32_t va
   
   CUDA_CHECK(cudaMemcpy(pad->p_host, pad->p, sizeof(CudaBatchF) * 3,
     cudaMemcpyDeviceToHost));
+
+  // printf("eval: %u\n", pad->p_host[0].elems[0].v);
   return pad->p_host;
 }
 
-void gkr_receive_challenge(CudaScratchPad *pad, int32_t eval_size, uint32_t var_idx, const void *r_ptr) {
+void gkr_receive_challenge(CudaScratchPad *pad, CudaCircuitLayer *layer, int32_t eval_size, uint32_t var_idx, const void *r_ptr) {
   auto r = *reinterpret_cast<const HostF*>(r_ptr);
-  auto f_in = (var_idx == 0) ? pad->v_init : pad->v_evals;
+  auto f_in = (var_idx == 0) ? layer->input_layer_vals.get() : pad->v_evals;
   __recv_challenge_kernel<<<dim3(eval_size, CudaBatchF::grid_size), block_size>>>
     (f_in, pad->v_evals, pad->hg_evals, pad->gate_exists, CudaF::make(r), eval_size, var_idx);
   __update_gate_exists_kernel<<<div_ceil(eval_size, block_size), block_size>>>(pad->gate_exists, eval_size, var_idx);
+}
+
+template <int64_t nb_input> __global__
+static void __prepare_g_x_kernel(CudaGate<nb_input>* gates, int64_t num_gates, CudaBatchF *init_v, CudaBatchF *hg,
+    CudaF *eq_evals_at_rz1, bool *gate_exists) {
+  auto tid_x = threadIdx.x + blockIdx.y * blockDim.y;
+  auto tid_y = blockIdx.x;
+
+  if (tid_y > 0 && gates[tid_y].i_ids[0] == gates[tid_y - 1].i_ids[0]) {
+    // backoff to avoid race condition (different blocks write to same hg[x] concurrently). i_ids must be sorted.
+    return;
+  }
+
+  for (auto i = tid_y; ; i++) {
+    auto& gate = gates[i];
+    auto& x = gate.i_ids[0];
+    auto& z = gate.o_id;
+    auto& coef = gate.coef;
+
+    if constexpr (nb_input == 1) {
+      hg[x].elems[tid_x] += coef * eq_evals_at_rz1[z];
+    } else if constexpr (nb_input == 2) {
+      static_assert(nb_input == 2);
+      auto& y = gate.i_ids[1];
+      hg[x].elems[tid_x] += init_v[y].elems[tid_x] * coef * eq_evals_at_rz1[z];
+    }
+
+    gate_exists[x] = true;    
+
+    if (!(i + 1 < num_gates && gates[i].i_ids[0] == gates[i + 1].i_ids[0])) {
+      // do things for backoff blocks.
+      break;
+    }
+  }
+}
+
+void gkr_prepare_g_x_vals(CudaScratchPad *pad, const void *layer_host, const void *eq_evals_at_rz1, int64_t rz1_len) {
+  const auto& layer = *reinterpret_cast<const gkr::CircuitLayer<HostBatchF, HostF>*>(layer_host);
+  const auto& layer_gpu = *layer.layer_gpu;
+
+  __clear_device(pad->hg_evals, rz1_len);
+  __clear_device(pad->gate_exists, rz1_len);
+  __copy_h2d<CudaF>(pad->eq_evals_at_rz1, eq_evals_at_rz1, rz1_len);
+
+  auto mul_size = layer.mul.sparse_evals.size();
+  auto add_size = layer.add.sparse_evals.size();
+  auto init_v = layer_gpu.input_layer_vals.get();
+
+  __prepare_g_x_kernel<2><<<dim3(mul_size, CudaBatchF::grid_size), block_size>>>(
+    layer_gpu.mul_wires_x.get(), mul_size, init_v, pad->hg_evals,
+    pad->eq_evals_at_rz1, pad->gate_exists);
+
+  __prepare_g_x_kernel<1><<<dim3(add_size, CudaBatchF::grid_size), block_size>>>(
+    layer_gpu.add_wires.get(), add_size, init_v, pad->hg_evals,
+    pad->eq_evals_at_rz1, pad->gate_exists);
+}
+
+__global__
+static void __prepare_h_y_kernel(CudaGate<2>* gates, int64_t num_gates, CudaBatchF *v, CudaBatchF *hg,
+    CudaF *eq_evals_at_rz1, CudaF *eq_evals_at_rx, bool *gate_exists) {
+  auto tid_x = threadIdx.x + blockIdx.y * blockDim.y;
+  auto tid_y = blockIdx.x;
+
+  printf("tidx: %d, tidy:%d bidy:%d bdimy:%d\n", tid_x, tid_y, blockIdx.y, blockDim.y);
+
+  if (tid_y > 0 && gates[tid_y].i_ids[1] == gates[tid_y - 1].i_ids[1]) {
+    // backoff to avoid race condition (different blocks write to same hg[x] concurrently). i_ids must be sorted.
+    // printf("gpu b%d: backoff\n", tid_y);
+    return;
+  }
+
+  for (auto i = tid_y; ; i++) {
+    auto& gate = gates[i];
+    auto& x = gate.i_ids[0];
+    auto& y = gate.i_ids[1];
+    auto& z = gate.o_id;
+    auto& coef = gate.coef;
+      
+    hg[y].elems[tid_x] += v[0].elems[tid_x] * coef * eq_evals_at_rz1[z] * eq_evals_at_rx[x];
+    gate_exists[y] = true;
+
+    if (tid_x == 0) {
+      // printf("gpu b%d: updated %d %u\n", tid_y, y, hg[y].elems[0].v);
+    }
+
+    if (!(i + 1 < num_gates && gates[i].i_ids[1] == gates[i + 1].i_ids[1])) {
+      // do things for backoff blocks.
+      break;
+    }
+  }
+}
+
+void gkr_prepare_h_y_vals(CudaScratchPad *pad, const void *layer_host, const void *eq_evals_at_rx, int64_t rx_len) {
+  const auto& layer = *reinterpret_cast<const gkr::CircuitLayer<HostBatchF, HostF>*>(layer_host);
+  const auto& layer_gpu = *layer.layer_gpu;
+
+  __clear_device(pad->hg_evals, rx_len);
+  __clear_device(pad->gate_exists, rx_len);
+  __copy_h2d<CudaF>(pad->eq_evals_at_rx, eq_evals_at_rx, rx_len);
+
+  auto mul_size = layer.mul.sparse_evals.size();
+
+  __prepare_h_y_kernel<<<dim3(mul_size, CudaBatchF::grid_size), block_size>>>(
+    layer_gpu.mul_wires_y.get(), mul_size, pad->v_evals, pad->hg_evals,
+    pad->eq_evals_at_rz1, pad->eq_evals_at_rx, pad->gate_exists);
 }
 
 } // namespace cuda

@@ -4,6 +4,7 @@
 #include "cuda/common.cuh"
 #include "cuda/m31.cuh"
 #include "LinearGKR/scratch_pad.hpp"
+#include <cstdint>
 
 namespace cuda {
 
@@ -21,8 +22,8 @@ struct CudaScratchPad {
   CudaBatchF *p_host;
   bool *gate_exists_host;
 
-  // F *eq_evals_at_rx;
-  // F *eq_evals_at_rz1;
+  CudaF *eq_evals_at_rx;
+  CudaF *eq_evals_at_rz1;
   // F *eq_evals_at_rz2;
   // F *eq_evals_first_half;
   // F *eq_evals_second_half;
@@ -33,13 +34,29 @@ struct CudaScratchPad {
 };
 
 template <typename T>
+void __clear_device(T* ptr, int64_t num_elems) {
+  CUDA_CHECK(cudaMemset(ptr, 0, num_elems * sizeof(T)));
+}
+
+template <typename T>
 static void __allocate_device(T*& ptr, int64_t num_elems) {
   CUDA_CHECK(cudaMalloc(&ptr, num_elems * sizeof(T)));
+  __clear_device(ptr, num_elems); // NOTE: should explicitly reset memory somewhere else
 }
 
 template <typename T>
 static void __allocate_host(T*& ptr, int64_t num_elems) {
   CUDA_CHECK(cudaMallocHost(&ptr, num_elems * sizeof(T)));
+}
+
+template <typename T>
+void __copy_h2d(void *dev_ptr, const void *host_ptr, int64_t num_elems) {
+  CUDA_CHECK(cudaMemcpy(dev_ptr, host_ptr, sizeof(T) * num_elems, cudaMemcpyHostToDevice));
+}
+
+template <typename T>
+void __copy_d2h(void *host_ptr, const void *dev_ptr, int64_t num_elems) {
+  CUDA_CHECK(cudaMemcpy(host_ptr, dev_ptr, sizeof(T) * num_elems, cudaMemcpyDeviceToHost));
 }
 
 static void __deallocate_device(void *ptr) {
@@ -65,8 +82,8 @@ void scratchpad_init(CudaScratchPad*& pad, int64_t max_nb_output, int64_t max_nb
   __allocate_host(pad->hg_evals_host, max_nb_input);
   __allocate_host(pad->p_host, 3);
   __allocate_host(pad->gate_exists_host, max_nb_input);
-  // __allocate_device(eq_evals_at_rx, max_nb_input);
-  // __allocate_device(eq_evals_at_rz1, max_nb_output);
+  __allocate_device(pad->eq_evals_at_rx, max_nb_input);
+  __allocate_device(pad->eq_evals_at_rz1, max_nb_output);
   // __allocate_device(eq_evals_at_rz2, max_nb_output);
   // __allocate_device(eq_evals_first_half, max_nb_output);
   // __allocate_device(eq_evals_second_half, max_nb_output);
@@ -82,8 +99,8 @@ void scratchpad_deinit(CudaScratchPad*& pad) {
   __deallocate_host(pad->hg_evals_host);
   __deallocate_host(pad->p_host);
   __deallocate_host(pad->gate_exists_host);
-  // __deallocate_device(eq_evals_at_rx);
-  // __deallocate_device(eq_evals_at_rz1);
+  __deallocate_device(pad->eq_evals_at_rx);
+  __deallocate_device(pad->eq_evals_at_rz1);
   // __deallocate_device(eq_evals_at_rz2);
   // __deallocate_device(eq_evals_first_half);
   // __deallocate_device(eq_evals_second_half);
@@ -91,15 +108,12 @@ void scratchpad_deinit(CudaScratchPad*& pad) {
   __host_delete(pad);
 }
 
-void scratchpad_check(void* pad_host, int64_t eval_size) {
+void scratchpad_check(void *pad_host, int64_t eval_size) {
   auto& pad = *reinterpret_cast<gkr::GKRScratchPad<HostBatchF, HostF>*>(pad_host);
   auto& pad_gpu = *pad.pad_gpu;
-  CUDA_CHECK(cudaMemcpy(pad_gpu.gate_exists_host, pad_gpu.gate_exists,
-    sizeof(bool) * pad_gpu.max_nb_input, cudaMemcpyDeviceToHost));
-  CUDA_CHECK(cudaMemcpy(pad_gpu.hg_evals_host, pad_gpu.hg_evals,
-    sizeof(CudaBatchF) * pad_gpu.max_nb_input, cudaMemcpyDeviceToHost));
-  CUDA_CHECK(cudaMemcpy(pad_gpu.v_evals_host, pad_gpu.v_evals,
-    sizeof(CudaBatchF) * pad_gpu.max_nb_input, cudaMemcpyDeviceToHost));
+  __copy_d2h<bool>(pad_gpu.gate_exists_host, pad_gpu.gate_exists, pad_gpu.max_nb_input);
+  __copy_d2h<CudaBatchF>(pad_gpu.hg_evals_host, pad_gpu.hg_evals, pad_gpu.max_nb_input);
+  __copy_d2h<CudaBatchF>(pad_gpu.v_evals_host, pad_gpu.v_evals, pad_gpu.max_nb_input);
 
   auto actual_exists = reinterpret_cast<bool*>(pad.gate_exists);
   auto actual_hg = reinterpret_cast<CudaBatchF*>(pad.hg_evals);
@@ -108,21 +122,20 @@ void scratchpad_check(void* pad_host, int64_t eval_size) {
     assert(actual_exists[i] == pad_gpu.gate_exists_host[i]);
     for (auto j = 0ll; j < CudaBatchF::batch_size; j++) {
       assert(actual_hg[i].elems[j] == pad_gpu.hg_evals_host[i].elems[j]);
-      assert(actual_v[i].elems[j] == pad_gpu.v_evals_host[i].elems[j]);
+      // assert(actual_v[i].elems[j] == pad_gpu.v_evals_host[i].elems[j]);
     }
   }
   printf("check pass, size=%ld\n", eval_size);
 }
 
-void scratchpad_load(void* pad_host) {
+void scratchpad_load(void *pad_host) {
   auto& pad = *reinterpret_cast<gkr::GKRScratchPad<HostBatchF, HostF>*>(pad_host);
   auto& pad_gpu = *pad.pad_gpu;
-  CUDA_CHECK(cudaMemcpy(pad_gpu.v_evals, pad.v_evals,
-    sizeof(CudaBatchF) * pad.max_nb_input, cudaMemcpyHostToDevice));
-  CUDA_CHECK(cudaMemcpy(pad_gpu.hg_evals, pad.hg_evals,
-    sizeof(CudaBatchF) * pad.max_nb_input, cudaMemcpyHostToDevice));
-  CUDA_CHECK(cudaMemcpy(pad_gpu.gate_exists, pad.gate_exists,
-    sizeof(bool) * pad.max_nb_input, cudaMemcpyHostToDevice));
+  // __copy_h2d<CudaBatchF>(pad_gpu.v_evals, pad.v_evals, 1);
+
+  __copy_h2d<CudaBatchF>(pad_gpu.v_evals, pad.v_evals, pad.max_nb_input);
+  __copy_h2d<CudaBatchF>(pad_gpu.hg_evals, pad.hg_evals, pad.max_nb_input);
+  __copy_h2d<bool>(pad_gpu.gate_exists, pad.gate_exists, pad.max_nb_input);
 }
 
 void scratchpad_load_v_init(CudaScratchPad* pad, const void* v_init, int64_t len) {
@@ -130,15 +143,26 @@ void scratchpad_load_v_init(CudaScratchPad* pad, const void* v_init, int64_t len
     sizeof(CudaBatchF) * len, cudaMemcpyHostToDevice));
 }
 
-void scratchpad_store(void* pad_host) {
+void scratchpad_store(void *pad_host) {
   auto& pad = *reinterpret_cast<gkr::GKRScratchPad<HostBatchF, HostF>*>(pad_host);
   auto& pad_gpu = *pad.pad_gpu;
-  CUDA_CHECK(cudaMemcpy(pad.v_evals, pad_gpu.v_evals,
-    sizeof(CudaBatchF) * pad.max_nb_input, cudaMemcpyDeviceToHost));
-  CUDA_CHECK(cudaMemcpy(pad.hg_evals, pad_gpu.hg_evals,
-    sizeof(CudaBatchF) * pad.max_nb_input, cudaMemcpyDeviceToHost));
-  CUDA_CHECK(cudaMemcpy(pad.gate_exists, pad_gpu.gate_exists,
-    sizeof(bool) * pad.max_nb_input, cudaMemcpyDeviceToHost));
+  __copy_d2h<CudaBatchF>(pad.v_evals, pad_gpu.v_evals, 1);
+
+  // __copy_d2h<CudaBatchF>(pad.v_evals, pad_gpu.v_evals, pad.max_nb_input);
+  // __copy_d2h<CudaBatchF>(pad.hg_evals, pad_gpu.hg_evals, pad.max_nb_input);
+  // __copy_d2h<bool>(pad.gate_exists, pad_gpu.gate_exists, pad.max_nb_input);
 }
+
+void scratchpad_test(void *pad_host, const char *msg) {
+  // auto& pad = *reinterpret_cast<gkr::GKRScratchPad<HostBatchF, HostF>*>(pad_host);
+  // auto& pad_gpu = *pad.pad_gpu;
+
+  // uint32_t tmp;
+  // __copy_d2h<uint32_t>(&tmp, &pad_gpu.v_evals[0].elems[0], 1);
+
+  // printf("%s v:%u\n", msg, tmp);
+}
+
+ASSERT_POD(CudaScratchPad);
 
 } // namespace cuda
