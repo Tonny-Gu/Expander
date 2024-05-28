@@ -13,7 +13,7 @@ namespace cuda {
 
 __global__
 static void __poly_eval_at_kernel_phase1(CudaBatchF *f_in, CudaBatchF *hg, Pack3<CudaBatchF*> p_psum, bool *gate_exists, int32_t eval_size, int32_t var_idx) {
-  auto tid_x = threadIdx.x + blockIdx.y * blockDim.y;
+  auto tid_x = threadIdx.x + blockIdx.y * blockDim.x;
   auto tid_y = blockIdx.x;
 
   // if (tid >= BatchF::batch_size) {
@@ -53,7 +53,7 @@ static void __poly_eval_at_kernel_phase1(CudaBatchF *f_in, CudaBatchF *hg, Pack3
 __global__
 static void __poly_eval_at_kernel_phase2(Pack3<CudaBatchF*> p_psum, int32_t eval_size, int32_t var_idx) {
   // in-place 2d reduction
-  auto tid_x = threadIdx.x + blockIdx.y * blockDim.y;
+  auto tid_x = threadIdx.x + blockIdx.y * blockDim.x;
   auto tid_y = blockIdx.x;
 
   auto p0 = CudaF::zero();
@@ -89,7 +89,7 @@ static void __poly_eval_at_kernel_phase2(Pack3<CudaBatchF*> p_psum, int32_t eval
 
 __global__
 static void __poly_eval_at_kernel_phase3(Pack3<CudaBatchF*> p_psum, CudaBatchF* p) {
-  auto tid_x = threadIdx.x + blockIdx.y * blockDim.y;
+  auto tid_x = threadIdx.x + blockIdx.y * blockDim.x;
 
   auto p0 = p_psum.v0[0].elems[tid_x];
   auto p1 = p_psum.v1[0].elems[tid_x];
@@ -103,7 +103,7 @@ static void __poly_eval_at_kernel_phase3(Pack3<CudaBatchF*> p_psum, CudaBatchF* 
 __global__
 static void __recv_challenge_kernel(CudaBatchF *f_in, CudaBatchF *f_out, CudaBatchF *hg, bool *gate_exists, CudaF r, int32_t eval_size, int32_t var_idx) {
   
-  auto tid_x = threadIdx.x + blockIdx.y * blockDim.y;
+  auto tid_x = threadIdx.x + blockIdx.y * blockDim.x;
   auto tid_y = blockIdx.x; // max grid size (2**32-1, 65535, 65535). use dim x for tid_y due to this limitation.
 
   auto left = tid_y << (var_idx + 1);
@@ -171,7 +171,7 @@ void gkr_receive_challenge(CudaScratchPad *pad, CudaCircuitLayer *layer, int32_t
 template <int64_t nb_input> __global__
 static void __prepare_g_x_kernel(CudaGate<nb_input>* gates, int64_t num_gates, CudaBatchF *init_v, CudaBatchF *hg,
     CudaF *eq_evals_at_rz1, bool *gate_exists) {
-  auto tid_x = threadIdx.x + blockIdx.y * blockDim.y;
+  auto tid_x = threadIdx.x + blockIdx.y * blockDim.x;
   auto tid_y = blockIdx.x;
 
   if (tid_y > 0 && gates[tid_y].i_ids[0] == gates[tid_y - 1].i_ids[0]) {
@@ -226,10 +226,8 @@ void gkr_prepare_g_x_vals(CudaScratchPad *pad, const void *layer_host, const voi
 __global__
 static void __prepare_h_y_kernel(CudaGate<2>* gates, int64_t num_gates, CudaBatchF *v, CudaBatchF *hg,
     CudaF *eq_evals_at_rz1, CudaF *eq_evals_at_rx, bool *gate_exists) {
-  auto tid_x = threadIdx.x + blockIdx.y * blockDim.y;
+  auto tid_x = threadIdx.x + blockIdx.y * blockDim.x;
   auto tid_y = blockIdx.x;
-
-  printf("tidx: %d, tidy:%d bidy:%d bdimy:%d\n", tid_x, tid_y, blockIdx.y, blockDim.y);
 
   if (tid_y > 0 && gates[tid_y].i_ids[1] == gates[tid_y - 1].i_ids[1]) {
     // backoff to avoid race condition (different blocks write to same hg[x] concurrently). i_ids must be sorted.

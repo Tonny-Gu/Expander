@@ -40,6 +40,6 @@ static constexpr int64_t div_ceil(int64_t a, int64_t b) {
   return a / b + (a % b > 0);
 }
 
-constexpr int32_t block_size = 32;
+constexpr int32_t block_size = 256;
 
 } // namespace cuda

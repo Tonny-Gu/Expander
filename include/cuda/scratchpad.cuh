@@ -117,7 +117,7 @@ void scratchpad_check(void *pad_host, int64_t eval_size) {
 
   auto actual_exists = reinterpret_cast<bool*>(pad.gate_exists);
   auto actual_hg = reinterpret_cast<CudaBatchF*>(pad.hg_evals);
-  auto actual_v = reinterpret_cast<CudaBatchF*>(pad.v_evals);
+  // auto actual_v = reinterpret_cast<CudaBatchF*>(pad.v_evals);
   for (auto i = 0ll; i < eval_size; i++) {
     assert(actual_exists[i] == pad_gpu.gate_exists_host[i]);
     for (auto j = 0ll; j < CudaBatchF::batch_size; j++) {
